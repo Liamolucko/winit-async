@@ -76,7 +76,8 @@ where
             }
         }
 
-        // Set this to false right before polling the future because we want any wakes inside of the poll to go through.
+        // Set this to false right before polling the future because we want any wakes
+        // inside of the poll to go through.
         will_poll.store(false, Ordering::Relaxed);
 
         match future.poll(&mut Context::from_waker(&waker)) {
