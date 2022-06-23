@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
 use std::task::{Context, Poll, Wake, Waker};
 
@@ -37,10 +38,16 @@ where
     }
 
     let mut state = State::Init(callback);
-    let waker = create_waker(&event_loop);
+
+    // A boolean shared between here and the wakers which is set to `true` if we're
+    // about to poll the future anyway, in which case the wakers do nothing.
+    let will_poll = Arc::new(AtomicBool::new(false));
+
+    let waker = create_waker(&event_loop, will_poll.clone());
 
     event_loop.run(move |event, target, control_flow| {
         *control_flow = ControlFlow::Wait;
+        will_poll.store(true, Ordering::Relaxed);
 
         if matches!(state, State::Init(_)) {
             let callback = match mem::replace(&mut state, State::Done) {
@@ -69,6 +76,9 @@ where
             }
         }
 
+        // Set this to false right before polling the future because we want any wakes inside of the poll to go through.
+        will_poll.store(false, Ordering::Relaxed);
+
         match future.poll(&mut Context::from_waker(&waker)) {
             Poll::Ready(()) => {
                 *control_flow = ControlFlow::Exit;
@@ -79,8 +89,11 @@ where
     });
 }
 
-fn create_waker(event_loop: &EventLoop<()>) -> Waker {
-    struct ProxyWaker(Mutex<EventLoopProxy<()>>);
+fn create_waker(event_loop: &EventLoop<()>, running: Arc<AtomicBool>) -> Waker {
+    struct ProxyWaker {
+        proxy: Mutex<EventLoopProxy<()>>,
+        running: Arc<AtomicBool>,
+    }
 
     impl Wake for ProxyWaker {
         fn wake(self: Arc<Self>) {
@@ -88,7 +101,12 @@ fn create_waker(event_loop: &EventLoop<()>) -> Waker {
         }
 
         fn wake_by_ref(self: &Arc<Self>) {
-            match self.0.try_lock() {
+            if self.running.load(Ordering::Relaxed) {
+                // The event loop is already running, no need to poll it.
+                return;
+            }
+
+            match self.proxy.try_lock() {
                 Ok(proxy) => {
                     // Note: this only returns an error if the event loop is closed, in which case
                     // we don't have to do anything anyway because there's nothing to wake.
@@ -102,5 +120,9 @@ fn create_waker(event_loop: &EventLoop<()>) -> Waker {
         }
     }
 
-    Arc::new(ProxyWaker(Mutex::new(event_loop.create_proxy()))).into()
+    Arc::new(ProxyWaker {
+        proxy: Mutex::new(event_loop.create_proxy()),
+        running,
+    })
+    .into()
 }
