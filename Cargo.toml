@@ -1,0 +1,12 @@
+[package]
+name = "winit-async"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-channel = "1.6.1"
+futures-core = { version = "0.3.21", default-features = false }
+winit = { git = "https://github.com/Liamolucko/winit", branch = "elwt-lifetime" }
+
+[dev-dependencies]
+futures-util = "0.3.21"
