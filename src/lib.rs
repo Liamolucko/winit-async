@@ -65,6 +65,8 @@ where
         };
 
         if event != Event::UserEvent(()) {
+            // TODO: end the stream on `LoopDestroyed`
+
             // TODO: define our own `'static` event type which doesn't have the
             // instant-resizing feature of `ScaleFactorChanged`
             match tx.try_send(event.to_static().unwrap()) {
@@ -90,10 +92,10 @@ where
     });
 }
 
-fn create_waker(event_loop: &EventLoop<()>, running: Arc<AtomicBool>) -> Waker {
+fn create_waker(event_loop: &EventLoop<()>, will_poll: Arc<AtomicBool>) -> Waker {
     struct ProxyWaker {
         proxy: Mutex<EventLoopProxy<()>>,
-        running: Arc<AtomicBool>,
+        will_poll: Arc<AtomicBool>,
     }
 
     impl Wake for ProxyWaker {
@@ -102,7 +104,7 @@ fn create_waker(event_loop: &EventLoop<()>, running: Arc<AtomicBool>) -> Waker {
         }
 
         fn wake_by_ref(self: &Arc<Self>) {
-            if self.running.load(Ordering::Relaxed) {
+            if self.will_poll.load(Ordering::Relaxed) {
                 // The event loop is already running, no need to poll it.
                 return;
             }
@@ -123,7 +125,7 @@ fn create_waker(event_loop: &EventLoop<()>, running: Arc<AtomicBool>) -> Waker {
 
     Arc::new(ProxyWaker {
         proxy: Mutex::new(event_loop.create_proxy()),
-        running,
+        will_poll,
     })
     .into()
 }
